@@ -207,7 +207,7 @@ def gen_descale_error(clip: vs.VideoNode,
     def _rescale(n: int, clip: vs.VideoNode) -> vs.VideoNode:
         cropping_args = descale_cropping_args(
             clip, src_heights[n], base_height, base_width, crop_top, crop_bottom, crop_left, crop_right, mode)
-        descaled = descaler(clip, b=0, c=1/2, **cropping_args)
+        descaled = descaler(clip, **cropping_args)
         cropping_args.update(width=clip.width, height=clip.height)
         return rescaler(descaled, **cropping_args)
     rescaled = core.std.FrameEval(clips, partial(_rescale, clip=clips))
@@ -241,8 +241,8 @@ def main() -> None:
     parser.add_argument('--frame', '-f', dest='frame_no', type=int,
                         default=0, help='Specify a frame for the analysis, default is 0')
     parser.add_argument('--kernel', '-k', dest='kernel', type=str.lower, default="bicubic", help='Resize kernel to be used')
-    parser.add_argument('--bicubic-b', '-b', dest='b', type=to_float, default="1/3", help='B parameter of bicubic resize')
-    parser.add_argument('--bicubic-c', '-c', dest='c', type=to_float, default="1/3", help='C parameter of bicubic resize')
+    parser.add_argument('--bicubic-b', '-b', dest='b', type=to_float, default="0", help='B parameter of bicubic resize')
+    parser.add_argument('--bicubic-c', '-c', dest='c', type=to_float, default="1/2", help='C parameter of bicubic resize')
     parser.add_argument('--lanczos-taps', '-t', dest='taps', type=int, default=3, help='Taps parameter of lanczos resize')
     parser.add_argument('--base-height', '-bh', dest='bh', type=int,
                         default=None, help='Base integer height before cropping')
