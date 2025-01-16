@@ -7,7 +7,7 @@ import runpy
 import time
 from functools import partial
 from math import floor
-from typing import Callable, Optional, Union
+from typing import Optional, Union, Callable, List
 
 import matplotlib.pyplot as plt
 import vapoursynth as vs
@@ -17,12 +17,110 @@ core = vs.core
 
 __all__ = ['descale_cropping_args']
 
+def Descale(
+    src: vs.VideoNode,
+    width: int,
+    height: int,
+    kernel: str,
+    custom_kernel: Union[Callable, None] = None,
+    taps: int = 3,
+    b: Union[int, float] = 0.0,
+    c: Union[int, float] = 0.5,
+    blur: Union[int, float] = 1.0,
+    post_conv : Union[List[Union[float, int]], None] = None,
+    src_left: Union[int, float] = 0.0,
+    src_top: Union[int, float] = 0.0,
+    src_width: Union[int, float, None] = None,
+    src_height: Union[int, float, None] = None,
+    border_handling: int = 0,
+    ignore_mask: Union[vs.VideoNode, None] = None,
+    force: bool = False,
+    force_h: bool = False,
+    force_v: bool = False,
+    opt: int = 0
+) -> vs.VideoNode:
+    
+    def _get_resize_name(kernal_name: str) -> str:
+        if kernal_name == 'Decustom':
+            return 'ScaleCustom'
+        if kernal_name.startswith('De'):
+            return kernal_name[2:].capitalize()
+        return kernal_name
+    
+    def _get_descaler_name(kernal_name: str) -> str:
+        if kernal_name == 'ScaleCustom':
+            return 'Decustom'
+        if kernal_name.startswith('De'):
+            return kernal_name
+        return 'De' + kernal_name[0].lower() + kernal_name[1:]
+    
+    assert width > 0 and height > 0
+    assert opt in [0, 1, 2]
+    assert isinstance(src, vs.VideoNode) and src.format.id == vs.GRAYS
+    
+    kernel = kernel.capitalize()
+    
+    if src_width is None:
+        src_width = width
+    if src_height is None:
+        src_height = height
+    
+    if width > src.width or height > src.height:
+        kernel = _get_resize_name(kernel)
+    else:
+        kernel = _get_descaler_name(kernel)
+    
+    descaler = getattr(core.descale, kernel)
+    assert callable(descaler)
+    extra_params: dict[str, dict[str, Union[float, int, Callable]]] = {}
+    if _get_descaler_name(kernel) == "Debicubic":
+        extra_params = {
+            'dparams': {'b': b, 'c': c},
+        }
+    elif _get_descaler_name(kernel) == "Delanczos":
+        extra_params = {
+            'dparams': {'taps': taps},
+        }
+    elif _get_descaler_name(kernel) == "Decustom":
+        assert callable(custom_kernel)
+        extra_params = {
+            'dparams': {'custom_kernel': custom_kernel},
+        }
+    descaled = descaler(
+        src=src,
+        width=width,
+        height=height,
+        blur=blur,
+        post_conv=post_conv,
+        src_left=src_left,
+        src_top=src_top,
+        src_width=src_width,
+        src_height=src_height,
+        border_handling=border_handling,
+        ignore_mask=ignore_mask,
+        force=force,
+        force_h=force_h,
+        force_v=force_v,
+        opt=opt,
+        **extra_params.get('dparams', {})
+    )
+    
+    assert isinstance(descaled, vs.VideoNode)
+    
+    return descaled
+
+def _DefineScaler(kernel: str, b: Union[int, float] = 1/3, c: Union[int, float] = 1/3, taps: int = 3) -> Callable:
+    assert kernel in ["bilinear", "bicubic", "lanczos", "spline16", "spline36", "spline64"]
+    assert taps in [2, 3, 4, 5, 6]
+    
+    return partial(Descale, kernel=kernel, b=b, c=c, taps=taps)
 
 def vpy_source_filter(path: str) -> vs.VideoNode:
     runpy.run_path(path, {}, '__vapoursynth__')
     output = vs.get_output(0)
     if not isinstance(output, vs.VideoNode):
         output = output[0]
+    assert isinstance(output, vs.VideoNode)
     return output
 
 
@@ -84,6 +182,8 @@ def descale_cropping_args(clip: vs.VideoNode, # letterbox-free source clip
 
 
 def gen_descale_error(clip: vs.VideoNode,
+                      descaler: Callable,
+                      rescaler: Callable,
                       crop_top: int,
                       crop_bottom: int,
                       crop_left: int,
@@ -107,9 +207,9 @@ def gen_descale_error(clip: vs.VideoNode,
     def _rescale(n: int, clip: vs.VideoNode) -> vs.VideoNode:
         cropping_args = descale_cropping_args(
             clip, src_heights[n], base_height, base_width, crop_top, crop_bottom, crop_left, crop_right, mode)
-        descaled = core.descale.Debicubic(clip, b=0, c=1/2, **cropping_args)
+        descaled = descaler(clip, b=0, c=1/2, **cropping_args)
         cropping_args.update(width=clip.width, height=clip.height)
-        return core.resize.Bicubic(descaled, **cropping_args)
+        return rescaler(descaled, **cropping_args)
     rescaled = core.std.FrameEval(clips, partial(_rescale, clip=clips))
     diff = core.std.Expr([clips, rescaled], f'x y - abs dup {thr} > swap 0 ?')
     diff = diff.std.Crop(10, 10, 10, 10).std.PlaneStats()
@@ -140,6 +240,10 @@ def main() -> None:
         description='Find the native fractional resolution of upscaled material (mostly anime)')
     parser.add_argument('--frame', '-f', dest='frame_no', type=int,
                         default=0, help='Specify a frame for the analysis, default is 0')
+    parser.add_argument('--kernel', '-k', dest='kernel', type=str.lower, default="bicubic", help='Resize kernel to be used')
+    parser.add_argument('--bicubic-b', '-b', dest='b', type=to_float, default="1/3", help='B parameter of bicubic resize')
+    parser.add_argument('--bicubic-c', '-c', dest='c', type=to_float, default="1/3", help='C parameter of bicubic resize')
+    parser.add_argument('--lanczos-taps', '-t', dest='taps', type=int, default=3, help='Taps parameter of lanczos resize')
     parser.add_argument('--base-height', '-bh', dest='bh', type=int,
                         default=None, help='Base integer height before cropping')
     parser.add_argument('--base-width', '-bw', dest='bw', type=int,
@@ -184,6 +288,8 @@ def main() -> None:
     assert args.cb >= 0
     assert args.cl >= 0
     assert args.cr >= 0
+    
+    descaler = rescaler = _DefineScaler(args.kernel, b=args.b, c=args.c, taps=args.taps)
 
     full_height = clip.height + args.ct + args.cb
     full_width = clip.width + args.cl + args.cr
@@ -231,7 +337,7 @@ def main() -> None:
     max_samples = floor((sh_max - sh_min) / args.sh_step) + 1
     src_heights = [sh_min + n * args.sh_step for n in range(max_samples)]
 
-    gen_descale_error(clip, args.ct, args.cb, args.cl, args.cr, args.frame_no,
+    gen_descale_error(clip, descaler, rescaler, args.ct, args.cb, args.cl, args.cr, args.frame_no,
                       base_height, base_width, src_heights,
                       args.mode, args.thr, True, args.ll, save_path)
 
