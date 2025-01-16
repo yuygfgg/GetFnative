@@ -160,24 +160,25 @@ def descale_cropping_args(clip: vs.VideoNode, # letterbox-free source clip
     cropped_height = base_height - floor(margin_top) - floor(margin_bottom)
     cropped_src_top = margin_top - floor(margin_top)
 
-    args = dict(
-        width=clip.width,
-        height=clip.height
-    )
-    args_w = dict(
-        width=cropped_width,
-        src_width=cropped_src_width,
-        src_left=cropped_src_left
-    )
-    args_h = dict(
-        height=cropped_height,
-        src_height=cropped_src_height,
-        src_top=cropped_src_top
-    )
+    args: dict[str, Union[int, float]] = {
+        "width": clip.width,
+        "height": clip.height
+    }
+    args_w = {
+        "width": cropped_width,
+        "src_width": cropped_src_width,
+        "src_left": cropped_src_left
+    }
+    args_h = {
+        "height": cropped_height,
+        "src_height": cropped_src_height,
+        "src_top": cropped_src_top
+    }
     if 'w' in mode.lower():
         args.update(args_w)
     if 'h' in mode.lower():
         args.update(args_h)
+    
     return args
 
 
@@ -200,7 +201,7 @@ def gen_descale_error(clip: vs.VideoNode,
                       ) -> None:
     num_samples = len(src_heights)
     clips = clip[frame_no].resize.Point(
-        format=vs.GRAYS, matrix_s='709' if clip.format.color_family == vs.RGB else None) * num_samples
+        format=vs.GRAYS, matrix_s='709' if clip.format.color_family == vs.RGB else None) * num_samples # type: ignore
     if ll:
         clips = core.resize.Point(clips, transfer=8, matrix_in=1, transfer_in=1, primaries_in=1)
     # Descale
@@ -218,7 +219,7 @@ def gen_descale_error(clip: vs.VideoNode,
     starttime = time.time()
     for n, f in enumerate(diff.frames()):
         print(f'\r{n + 1}/{num_samples}', end='')
-        errors[n] = f.props['PlaneStatsAverage']
+        errors[n] = f.props['PlaneStatsAverage'] # type: ignore
     print(f'\nDone in {time.time() - starttime:.2f}s')
     gc.collect()
     # Plot
